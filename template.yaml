@@ -1,0 +1,84 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Post to Slack if an update exists for an Elastic Beanstalk environment
+
+Globals:
+  Function:
+    Timeout: 3
+
+Parameters:
+  SlackChannel:
+    Type: String
+    Description: Slack channel to post notifications to
+    Default: '#notification_tests'
+
+  KMSDecryptSSMKeyID:
+    Type: String
+    Description: The KMS Key used to decrypt SSM parameters
+
+  SlackBotOAuthTokenSSMPath:
+    Type: String
+    Description: The path to the SSM Parameter containing a valid Slack oAuth token
+
+Resources:
+  EBNotifierFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/
+      Handler: app.lambda_handler
+      Runtime: python3.7
+      Timeout: 60
+      Role: !GetAtt EBNotifierIAMRole.Arn
+      Environment:
+        Variables:
+          SLACK_CHANNEL: !Ref SlackChannel
+          SLACK_TOKEN_SSM_PATH: !Ref SlackBotOAuthTokenSSMPath
+      Events:
+        EveryMonday1pm:
+          Type: Schedule
+          Properties:
+            Schedule: cron(0 13 ? * MON *)
+
+  EBNotifierIAMRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          -
+            Sid: "AllowLambdaServiceToAssumeRole"
+            Effect: "Allow"
+            Action:
+              - "sts:AssumeRole"
+            Principal:
+              Service:
+                - "lambda.amazonaws.com"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: "AllowEB"
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - elasticbeanstalk:DescribeApplications
+                  - elasticbeanstalk:DescribeEnvironments
+                  - elasticbeanstalk:ListPlatformVersions
+                  - iam:ListAccountAliases
+                Resource:
+                  - '*'
+              - Effect: Allow
+                Action:
+                  - ssm:GetParametersByPath
+                  - ssm:GetParameters
+                  - ssm:GetParameter
+                  - ssm:DescribeParameters
+                Resource:
+                  - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${SlackBotOAuthTokenSSMPath}
+              - Effect: Allow
+                Action:
+                  - kms:Decrypt*
+                Resource:
+                  - !Sub arn:aws:kms:${AWS::Region}:${AWS::AccountId}:key/${KMSDecryptSSMKeyID}
